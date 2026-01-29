@@ -1,71 +1,64 @@
-def ATACK_compute(ATK,MGK,WEPON,critical,Ncritical,level,sukumi,type):
-    ans=0
-    if type != 1 and type != 2:
-        ans="error"
-    elif type ==1:
-        ans=ATK+(WEPON+Ncritical)*critical+level+sukumi
-    elif type ==2:
-        ans=MGK+(WEPON+Ncritical)*critical+level+sukumi
-    return ans
+def get_attack_power(data, attack_type):
+    """攻撃力を計算する"""
+    # 物理(1)か魔法(2)かを選択
+    base_stat = data['ATK'] if attack_type == 1 else data['MGK']
 
-def DF_compute(DF,MDF,terrain,type):
-    ans=0
-    if  type !=1  and type !=2:
-        ans="error"
-    elif type==1:
-        ans=DF+terrain
-    elif type==2:
-        ans=MDF+terrain
-    return ans
-def Damage_compute(ATK,MGK,WEPON,critical,Ncritical,level,sukumi,DF,MDF,terrain,offline,special,type):
-    damage=0
-    off=ATACK_compute(ATK,MGK,WEPON,critical,Ncritical,level,sukumi,type)
-    df=DF_compute(DF,MDF,terrain,type)
-    if off == "error"or df=="error":
-        damage="error"
-    else:
-        damage=(off-df)*offline*special
-    return damage
+    # 計算式: ステータス + (武器 + クリティカル補正) * 倍率 + レベル + 属性相性
+    return base_stat + (data['WEPON'] + data['Ncritical']) * data['critical'] + data['level'] + data['sukumi']
+
+
+def get_defense_power(data, attack_type):
+    """防御力を計算する"""
+    # 物理(1)か魔法(2)かに対応する防御ステータスを選択
+    base_df = data['DF'] if attack_type == 1 else data['MDF']
+    return base_df + data['terrain']
+
+
+def compute_damage(data, attack_type):
+    """最終ダメージを計算する"""
+    if attack_type not in [1, 2]:
+        return "error"
+
+    atk_power = get_attack_power(data, attack_type)
+    def_power = get_defense_power(data, attack_type)
+
+    # ダメージ = (攻撃力 - 防御力) * オフライン補正 * スペシャル補正
+    damage = (atk_power - def_power) * data['offline'] * data['special']
+    return max(0, damage)  # ダメージがマイナスにならないよう調整
+
 
 def main():
-    # 入力したい項目の名前をリストにする
-    type=int(input("物理1,魔法2:"))
-    ATACK_fields = ["ATK", "MGK", "WEPON", "critical", "Ncritical","level", "sukumi"]
-    Defence_field=["DF","MDF","terrain"]
-    sp_field=["offline","special"]
+    print("--- ダメージ計算シミュレーター ---")
+    attack_type = int(input("攻撃タイプを選択 (物理:1, 魔法:2): "))
 
-    # 結果を格納する辞書
-    data_at = {}
-    data_df={}
-    data_sp={}
+    # 設定項目とメッセージの定義
+    fields = {
+        "ATK": "攻撃力 (ATK)",
+        "MGK": "魔法力 (MGK)",
+        "WEPON": "武器威力 (WEPON)",
+        "critical": "クリティカル (1~3)",
+        "Ncritical": "クリティカル定数 (-4 or 0)",
+        "level": "レベル補正 (1~4)",
+        "sukumi": "属性相性 (0 or ±2)",
+        "DF": "物理防御 (DF)",
+        "MDF": "魔法防御 (MDF)",
+        "terrain": "地形効果",
+        "offline": "攻陣補正 (1 or 0.5)",
+        "special": "スペシャル補正 (1, 3, or 4)"
+    }
 
-    for field in ATACK_fields:
-        # 順番に名前を表示して入力を促す
-        if field == "critical" :
-            value= input(f"{field} の値は1~3を入力してください: ")
-        elif field == "Ncritical" :
-            value = input(f"{field} の値を-4又は0を入力してください: ")
-        elif field == "level":
-            value = input(f"{field} の値を1~4を入力してください: ")
-        elif field == "sukumi":
-            value = input(f"{field} の値を0又は+-2で入力してください: ")
-        else:
-            value = input(f"{field} の値を入力してください: ")
-        data_at[field] = float(value)
+    # 一括入力
+    user_data = {}
+    for key, label in fields.items():
+        user_data[key] = float(input(f"{label} を入力してください: "))
 
-    for field in Defence_field:
-        value= input(f"{field} の値を入力してください: ")
-        data_df[field] = float(value)
-    for field in sp_field:
-        if field =="offline":
-                value = input(f"{field} の値を1か0.5で入力してください: ")
-        else:
-                value = input(f"{field} の値1か3又は4で入力してください: ")
-        data_sp[field] = float(value)
-    damage=Damage_compute(data_at["ATK"], data_at["MGK"], data_at["WEPON"], data_at["critical"], data_at["Ncritical"],
-                       data_at["level"], data_at["sukumi"],data_df["DF"],data_df["MDF"],data_df["terrain"],data_sp["offline"],data_sp["special"],type)
-    print(damage)
-    return
+    # 計算実行
+    result = compute_damage(user_data, attack_type)
+
+    print("\n" + "=" * 20)
+    print(f"最終ダメージ: {result}")
+    print("=" * 20)
+
 
 if __name__ == '__main__':
     main()
