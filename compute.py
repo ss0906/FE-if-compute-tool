@@ -6,7 +6,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import platform
 import sys
 
-# --- 🛠 基本設定 ---
+# --- 🛠 基本設定 & フォント対策 ---
 plt.rcParams["axes.unicode_minus"] = False
 if platform.system() == "Darwin":
     plt.rcParams["font.family"] = "Hiragino Sans"
@@ -29,10 +29,12 @@ def load_and_clean_csv(filename, set_index=None):
         df.columns = df.columns.str.strip()
         if set_index: df = df.set_index(set_index)
         return df
-    except:
+    except Exception as e:
+        print(f"Error loading {filename}: {e}")
         return pd.DataFrame()
 
 
+# データの読み込み
 df_char = load_and_clean_csv("キャラ.csv", set_index="キャラ名")
 df_class = load_and_clean_csv("クラス.csv", set_index="クラス名")
 df_init = load_and_clean_csv("初期パラメーター.csv")
@@ -43,20 +45,20 @@ df_class_limit = load_and_clean_csv("クラス上限値.csv", set_index="クラ�
 class GrowthApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("FE if 期待値シミュレーター (終了ボタン搭載版)")
+        self.root.title("FE if 期待値シミュレーター (ルート別初期値対応版)")
         self.root.geometry("1900x1050")
 
-        # ウィンドウ自体の閉じるボタン（×）にも確認を入れる
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
         self.intervals = []
         self.selected_char = ""
-        self.selected_category = ""
+        self.selected_category_full = ""  # 実際の「暗夜12章加入」などの文字列
+        self.current_unit_data = None  # 選択されたルートの初期値行
         self.selected_class = tk.StringVar(value="（未選択）")
+
         self.create_widgets()
 
     def exit_app(self):
-        """アプリ終了時の確認"""
         if messagebox.askokcancel("終了確認", "シミュレーターを終了しますか？"):
             self.root.destroy()
             sys.exit()
@@ -71,15 +73,38 @@ class GrowthApp:
         return base
 
     def create_widgets(self):
-        # 1. 上部：キャラ選択
+        # 1. 上部：キャラ選択 (ルート判別対応)
         top_frame = tk.Frame(self.root, pady=10);
         top_frame.pack(fill=tk.X)
-        self._create_selector(top_frame, df_init, "キャラ名", self.select_unit)
+        configs = [("共通", "#9E9E9E", "共通"), ("白夜", "#2196F3", "白夜"),
+                   ("暗夜", "#F44336", "暗夜"), ("透魔", "#00BCD4", "透魔"),
+                   ("子世代", "#FF9800", "子|外伝")]
+
+        for i, (title, color, kw) in enumerate(configs):
+            frame = tk.Frame(top_frame, bd=1, relief=tk.RIDGE);
+            frame.grid(row=0, column=i, sticky="nsew", padx=3)
+            tk.Label(frame, text=title, bg=color, fg="white", font=("", 10, "bold")).pack(fill=tk.X)
+            can = tk.Canvas(frame, width=220, height=140, bg="white", highlightthickness=0);
+            can.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scr = ttk.Scrollbar(frame, orient="vertical", command=can.yview);
+            scr.pack(side=tk.RIGHT, fill=tk.Y);
+            can.configure(yscrollcommand=scr.set)
+            content = tk.Frame(can, bg="white");
+            can.create_window((0, 0), window=content, anchor="nw")
+
+            mask = df_init["カテゴリ"].str.contains(kw, na=False)
+            for _, row in df_init[mask].iterrows():
+                tk.Button(content, text=row["キャラ名"], width=20,
+                          command=lambda n=row["キャラ名"], k=kw: self.select_unit(n, k)).pack(pady=1)
+
+            content.bind("<Configure>", lambda e, c=can: c.configure(scrollregion=c.bbox("all")))
+            self._bind_mousewheel(can);
+            top_frame.columnconfigure(i, weight=1)
 
         content_frame = tk.Frame(self.root, padx=15);
         content_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 2. 左パネル
+        # 2. 左パネル (操作エリア)
         left_panel = tk.Frame(content_frame, width=650, padx=15);
         left_panel.pack(side=tk.LEFT, fill=tk.Y)
         left_panel.pack_propagate(False)
@@ -87,7 +112,7 @@ class GrowthApp:
         self.lbl_status = tk.Label(left_panel, text="キャラを選択してください", font=("", 16, "bold"), fg="#1a73e8")
         self.lbl_status.pack(anchor="w", pady=5)
 
-        # 設定エリア
+        # 設定
         settings_f = tk.Frame(left_panel);
         settings_f.pack(fill=tk.X)
         kamui_f = tk.LabelFrame(settings_f, text="カムイ得意・不得意", padx=10, pady=5);
@@ -112,20 +137,19 @@ class GrowthApp:
         # クラス選択
         class_sel_f = tk.LabelFrame(left_panel, text="クラス一括選択", padx=10, pady=5);
         class_sel_f.pack(fill=tk.BOTH, expand=True, pady=5)
-        canvas_cl = tk.Canvas(class_sel_f, bg="white", highlightthickness=0);
-        canvas_cl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_cl = ttk.Scrollbar(class_sel_f, orient="vertical", command=canvas_cl.yview);
-        scroll_cl.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas_cl.configure(yscrollcommand=scroll_cl.set)
-        inner_cl = tk.Frame(canvas_cl, bg="white")
-        canvas_cl.create_window((0, 0), window=inner_cl, anchor="nw")
+        can_cl = tk.Canvas(class_sel_f, bg="white", highlightthickness=0);
+        can_cl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scr_cl = ttk.Scrollbar(class_sel_f, orient="vertical", command=can_cl.yview);
+        scr_cl.pack(side=tk.RIGHT, fill=tk.Y);
+        can_cl.configure(yscrollcommand=scr_cl.set)
+        inner_cl = tk.Frame(can_cl, bg="white")
+        can_cl.create_window((0, 0), window=inner_cl, anchor="nw")
         for idx, name in enumerate(df_class.index):
             r, c = divmod(idx, 3)
-            btn = tk.Button(inner_cl, text=name, width=20, font=("", 9), command=lambda n=name: self.set_class(n),
-                            bg="#f8f9fa")
-            btn.grid(row=r, column=c, padx=3, pady=2)
-        inner_cl.bind("<Configure>", lambda e: canvas_cl.configure(scrollregion=canvas_cl.bbox("all")))
-        self._bind_mousewheel(canvas_cl)
+            tk.Button(inner_cl, text=name, width=20, font=("", 9), command=lambda n=name: self.set_class(n),
+                      bg="#f8f9fa").grid(row=r, column=c, padx=3, pady=2)
+        inner_cl.bind("<Configure>", lambda e: can_cl.configure(scrollregion=can_cl.bbox("all")))
+        self._bind_mousewheel(can_cl)
 
         # ルート確定
         route_f = tk.LabelFrame(left_panel, text="ルート確定", padx=10, pady=10);
@@ -145,13 +169,9 @@ class GrowthApp:
 
         self.listbox = tk.Listbox(left_panel, height=4, font=("", 10));
         self.listbox.pack(fill=tk.X, pady=5)
-
-        # 実行・削除ボタン
         tk.Button(left_panel, text="📊 期待値計算実行", command=self.calculate_expectations, bg="#2196F3", fg="white",
                   font=("", 14, "bold"), height=2).pack(fill=tk.X, pady=5)
         tk.Button(left_panel, text="リスト全削除", command=self.clear_intervals).pack(fill=tk.X, pady=2)
-
-        # --- 追加: 終了ボタン ---
         tk.Button(left_panel, text="🚪 アプリを終了", command=self.exit_app, bg="#f44336", fg="white",
                   font=("", 10, "bold")).pack(fill=tk.X, pady=10)
 
@@ -166,40 +186,14 @@ class GrowthApp:
                                                                                                 anchor="center")
         self.tree.pack(fill=tk.BOTH, expand=True)
 
-    # ... (以降、スクロールバインドや計算ロジックなどは前回と同様のため維持)
-    def _create_selector(self, parent, df, col_name, command_func):
-        configs = [("共通", "#9E9E9E", ["共通"]), ("白夜", "#2196F3", ["白夜"]), ("暗夜", "#F44336", ["暗夜"]),
-                   ("透魔", "#00BCD4", ["透魔"]), ("子世代", "#FF9800", ["子", "外伝"])]
-        for i, (title, color, keywords) in enumerate(configs):
-            frame = tk.Frame(parent, bd=1, relief=tk.RIDGE);
-            frame.grid(row=0, column=i, sticky="nsew", padx=3)
-            tk.Label(frame, text=title, bg=color, fg="white", font=("", 10, "bold")).pack(fill=tk.X)
-            can = tk.Canvas(frame, width=220, height=140, bg="white", highlightthickness=0);
-            can.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scr = ttk.Scrollbar(frame, orient="vertical", command=can.yview);
-            scr.pack(side=tk.RIGHT, fill=tk.Y);
-            can.configure(yscrollcommand=scr.set)
-            content = tk.Frame(can, bg="white");
-            can.create_window((0, 0), window=content, anchor="nw")
-            mask = df["カテゴリ"].apply(lambda x: any(k in str(x) for k in keywords))
-            for _, row in df[mask].iterrows():
-                tk.Button(content, text=row[col_name], width=20,
-                          command=lambda n=row[col_name], c=row["カテゴリ"]: command_func(n, c)).pack(pady=1)
-            content.bind("<Configure>", lambda e, c=can: c.configure(scrollregion=c.bbox("all")))
-            self._bind_mousewheel(can);
-            parent.columnconfigure(i, weight=1)
-
     def _bind_mousewheel(self, canvas):
-        def _on_mousewheel(event):
+        def _on_mw(e):
             if platform.system() == "Windows":
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
             else:
-                canvas.yview_scroll(int(-1 * event.delta), "units")
+                canvas.yview_scroll(int(-1 * e.delta), "units")
 
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-    def set_class(self, name):
-        self.selected_class.set(name); self.update_graph()
+        canvas.bind_all("<MouseWheel>", _on_mw)
 
     def _create_stat_inputs(self, parent, label):
         tk.Label(parent, text=label, font=("", 8)).pack(anchor="w");
@@ -214,13 +208,21 @@ class GrowthApp:
             entries[s] = e
         return entries
 
-    def select_unit(self, name, cat):
-        self.selected_char, self.selected_category = name, cat
-        self.lbl_status.config(text=f"選択中: {name} ({cat})")
-        match = df_init[df_init["キャラ名"] == name].iloc[0]
-        self.ent_start.delete(0, tk.END);
-        self.ent_start.insert(0, str(int(match["Lv"])))
-        self.update_graph()
+    def select_unit(self, name, kw):
+        # 名前とキーワードの両方でフィルタリング
+        mask = (df_init["キャラ名"] == name) & (df_init["カテゴリ"].str.contains(kw, na=False))
+        if not df_init[mask].empty:
+            match = df_init[mask].iloc[0]
+            self.current_unit_data = match
+            self.selected_char = name
+            self.selected_category_full = match["カテゴリ"]
+            self.lbl_status.config(text=f"選択中: {name} ({self.selected_category_full})")
+            self.ent_start.delete(0, tk.END);
+            self.ent_start.insert(0, str(int(match["Lv"])))
+            self.update_graph()
+
+    def set_class(self, name):
+        self.selected_class.set(name); self.update_graph()
 
     def add_interval(self):
         try:
@@ -256,23 +258,27 @@ class GrowthApp:
         self.canvas.draw()
 
     def calculate_expectations(self):
-        if not self.selected_char or not self.intervals: return
-        for item in self.tree.get_children(): self.tree.delete(item)
+        if self.current_unit_data is None or not self.intervals: return
+        for itm in self.tree.get_children(): self.tree.delete(itm)
         try:
-            match = df_init[df_init["キャラ名"] == self.selected_char].iloc[0]
-            curr = match[STATS_COLUMNS].astype(float).copy()
-            if any(k in self.selected_category for k in ["子", "外伝"]):
+            # 正しいルートの初期値を参照
+            curr = self.current_unit_data[STATS_COLUMNS].astype(float).copy()
+
+            # 子世代遺伝
+            if any(k in self.selected_category_full for k in ["子", "外伝"]):
                 fs = pd.Series({s: float(self.father_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
                 ms = pd.Series({s: float(self.mother_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
                 if fs.sum() > 0 or ms.sum() > 0:
                     gen_sum = (fs + ms - curr * 2).clip(lower=0)
                     bonus = (gen_sum / 4).clip(upper=(2 + curr / 10))
                     curr += bonus
+
             prev_cls = self.intervals[0]['class']
             curr = curr.clip(upper=df_class_limit.loc[prev_cls, STATS_COLUMNS])
             self.tree.insert("", tk.END,
                              values=[f"加入(Lv.{self.intervals[0]['start']}: {prev_cls})"] + [f"{v:.2f}" for v in curr],
                              tags=('bold',))
+
             for itm in self.intervals:
                 if itm['class'] != prev_cls:
                     curr = (curr + (df_class_base.loc[itm['class'], STATS_COLUMNS] - df_class_base.loc[
