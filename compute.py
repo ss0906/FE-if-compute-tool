@@ -43,12 +43,12 @@ df_class_limit = load_and_clean_csv("クラス上限値.csv", set_index="クラ�
 class GrowthApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("FE if 期待値シミュレーター (個別削除機能版)")
+        self.root.title("FE if 期待値シミュレーター (上限反映・履歴強化版)")
         self.root.geometry("1900x1050")
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
         self.intervals = []
-        self.current_result = None
+        self.current_result = None  # これは上限適用前の「生の値」を保持
         self.selected_char = ""
         self.selected_category_full = ""
         self.current_unit_data = None
@@ -155,7 +155,6 @@ class GrowthApp:
         self.ent_end.pack(side=tk.LEFT)
         tk.Button(rt_f, text="追加", command=self.add_interval, bg="#4CAF50", fg="white", width=8).pack(side=tk.RIGHT)
 
-        # --- ルートリストと個別削除ボタン ---
         list_btn_f = tk.Frame(left_panel);
         list_btn_f.pack(fill=tk.X)
         self.listbox = tk.Listbox(list_btn_f, height=4, font=("", 9));
@@ -184,7 +183,7 @@ class GrowthApp:
         self.tree.tag_configure('limit', foreground="red", font=("", 9, "bold"))
 
         # 履歴エリア
-        hist_f = tk.LabelFrame(right_panel, text="保存済み履歴（選択して比較・削除）", padx=10, pady=5);
+        hist_f = tk.LabelFrame(right_panel, text="保存済み履歴（上限値適用済み・比較用）", padx=10, pady=5);
         hist_f.pack(fill=tk.X)
         self.history_tree = ttk.Treeview(hist_f, columns=["名前", "ルート情報"] + STATS_COLUMNS, show="headings",
                                          height=6)
@@ -245,14 +244,12 @@ class GrowthApp:
         except:
             pass
 
-    # --- 個別削除ロジック (ルート) ---
     def delete_selected_interval(self):
         selected_idx = self.listbox.curselection()
         if not selected_idx: return
         idx = selected_idx[0]
-        self.listbox.delete(idx)  # UIから削除
-        self.intervals.pop(idx)  # データから削除
-        # 次の開始レベルを自動調整
+        self.listbox.delete(idx)
+        self.intervals.pop(idx)
         if self.intervals:
             last_lv = self.intervals[-1]['end']
             self.ent_start.delete(0, tk.END);
@@ -272,11 +269,17 @@ class GrowthApp:
         p_g = self._get_modified_personal_growth(p_name) // 2 if p_name != "（なし）" else 0
         cl_g = df_class.loc[self.selected_class.get(), STATS_COLUMNS].astype(
             float) if self.selected_class.get() in df_class.index else 0
-        total = pg + p_g + cl_g
+
+        total_rates = pg + p_g + cl_g
         self.ax_rate.bar(STATS_COLUMNS, pg, label="個人", color="#90caf9")
         self.ax_rate.bar(STATS_COLUMNS, p_g, bottom=pg, label="親", color="#f48fb1")
         self.ax_rate.bar(STATS_COLUMNS, cl_g, bottom=pg + p_g, label="クラス", color="#a5d6a7")
-        self.ax_rate.set_ylim(0, 200);
+
+        for i, total in enumerate(total_rates):
+            self.ax_rate.text(i, total + 2, f"{int(total)}%", ha='center', fontsize=9, fontweight='bold')
+
+        self.ax_rate.set_ylabel("合計成長率 (%)")
+        self.ax_rate.set_ylim(0, 220);
         self.canvas.draw()
 
     def calculate_expectations(self):
@@ -320,28 +323,45 @@ class GrowthApp:
         tag = ('limit',) if is_capped else ()
         self.tree.insert("", tk.END, values=values, tags=tag)
 
+    # --- 履歴保存時、上限値を反映するように修正 ---
     def save_to_history(self):
         if self.current_result is None or not self.intervals: return
+
+        # 最終的なクラスの上限値を取得
+        last_cls = self.intervals[-1]['class']
+        limit = df_class_limit.loc[last_cls, STATS_COLUMNS]
+
+        # 上限を反映(クリップ)した値を保存用データとする
+        capped_result = self.current_result.clip(upper=limit)
+
         route_str = f"[{self.selected_category_full}] " + " → ".join(
             [f"{i['class']}{i['end']}" for i in self.intervals])
-        data = [self.selected_char, route_str] + [f"{v:.1f}" for v in self.current_result]
+        data = [self.selected_char, route_str] + [f"{v:.1f}" for v in capped_result]  # 上限反映済み
+
         self.history_tree.insert("", tk.END, values=data)
-        messagebox.showinfo("保存", f"{self.selected_char} のルートと結果を保存しました。")
+        messagebox.showinfo("保存", f"{self.selected_char} のルートと上限反映済み結果を保存しました。")
 
     def compare_history(self):
         selected = self.history_tree.selection()
         if not selected or self.current_result is None: return
         hist_values = self.history_tree.item(selected[0])['values']
+
+        # 履歴値（すでに保存時に上限適用済み）
         h_stats = pd.Series([float(v) for v in hist_values[2:]], index=STATS_COLUMNS)
+
+        # 現在の計算値（表示中のルートの最終クラス上限を適用）
         last_cls = self.intervals[-1]['class']
         c_stats = self.current_result.clip(upper=df_class_limit.loc[last_cls, STATS_COLUMNS])
+
         diff = c_stats - h_stats
 
         comp_win = tk.Toplevel(self.root);
-        comp_win.title("期待値比較：赤青表示")
+        comp_win.title("期待値比較：上限反映済み")
         comp_win.geometry("500x450")
-        tk.Label(comp_win, text=f"【比較】 現在 vs 履歴({hist_values[0]})\n(ルート: {hist_values[1][:30]}...)",
-                 font=("", 9, "bold")).pack()
+        tk.Label(comp_win,
+                 text=f"【比較】 現在 vs 履歴({hist_values[0]})\n※両方のデータに各最終クラスの上限を適用しています",
+                 font=("", 9, "bold")).pack(pady=5)
+
         f = tk.Frame(comp_win, padx=20, pady=10);
         f.pack(fill=tk.BOTH, expand=True)
         tk.Label(f, text="項目", font=("", 9, "bold")).grid(row=0, column=0)
@@ -357,7 +377,6 @@ class GrowthApp:
             color = "blue" if d_val > 0.01 else "red" if d_val < -0.01 else "black"
             tk.Label(f, text=f"{d_val:+.2f}", fg=color, font=("", 10, "bold")).grid(row=i + 1, column=3)
 
-    # --- 履歴個別削除 ---
     def delete_history(self):
         selected_items = self.history_tree.selection()
         if not selected_items: return
