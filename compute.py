@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import platform
 import sys
+import os
 
 # --- 🛠 基本設定 ---
 plt.rcParams["axes.unicode_minus"] = False
@@ -43,23 +44,39 @@ df_class_limit = load_and_clean_csv("クラス上限値.csv", set_index="クラ�
 class GrowthApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("FE if 期待値シミュレーター (上限反映・履歴強化版)")
-        self.root.geometry("1900x1050")
+        self.root.title("FE if 期待値シミュレーター (完全版・終了ボタン復旧)")
+        self.root.geometry("1800x1000")
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
+        self.history_file = "history.csv"
         self.intervals = []
-        self.current_result = None  # これは上限適用前の「生の値」を保持
+        self.current_result = None
         self.selected_char = ""
         self.selected_category_full = ""
         self.current_unit_data = None
         self.selected_class = tk.StringVar(value="（未選択）")
 
         self.create_widgets()
+        self.load_history_from_file()
 
     def exit_app(self):
         if messagebox.askokcancel("終了", "シミュレーターを終了しますか？"):
             self.root.destroy();
             sys.exit()
+
+    def load_history_from_file(self):
+        if os.path.exists(self.history_file):
+            try:
+                df_h = pd.read_csv(self.history_file, encoding="utf-8-sig")
+                for _, row in df_h.iterrows():
+                    self.history_tree.insert("", tk.END, values=list(row))
+            except:
+                pass
+
+    def save_history_to_file(self):
+        data = [self.history_tree.item(item)['values'] for item in self.history_tree.get_children()]
+        cols = ["名前", "ルート情報"] + STATS_COLUMNS
+        pd.DataFrame(data, columns=cols).to_csv(self.history_file, index=False, encoding="utf-8-sig")
 
     def _get_modified_personal_growth(self, char_name):
         if char_name not in df_char.index: return pd.Series(0.0, index=STATS_COLUMNS)
@@ -91,7 +108,7 @@ class GrowthApp:
             for _, row in df_init[mask].iterrows():
                 tk.Button(content, text=row["キャラ名"], width=18, font=("", 9),
                           command=lambda n=row["キャラ名"], k=kw: self.select_unit(n, k)).pack(pady=1)
-            content.bind("<Configure>", lambda e, c=can: c.configure(scrollregion=c.bbox("all")))
+            content.bind("<Configure>", lambda e, c=can: c.configure(scrollregion=c.bbox("all")));
             self._bind_mousewheel(can);
             top_frame.columnconfigure(i, weight=1)
 
@@ -100,13 +117,12 @@ class GrowthApp:
 
         # 2. 左パネル
         left_panel = tk.Frame(main_content, width=650, padx=10);
-        left_panel.pack(side=tk.LEFT, fill=tk.Y)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y);
         left_panel.pack_propagate(False)
-
-        self.lbl_status = tk.Label(left_panel, text="キャラを選択してください", font=("", 14, "bold"), fg="#1a73e8")
+        self.lbl_status = tk.Label(left_panel, text="キャラを選択してください", font=("", 14, "bold"), fg="#1a73e8");
         self.lbl_status.pack(anchor="w", pady=5)
 
-        # 設定エリア
+        # 設定
         set_f = tk.Frame(left_panel);
         set_f.pack(fill=tk.X)
         k_f = tk.LabelFrame(set_f, text="カムイ得意/不得意", padx=5, pady=2);
@@ -122,8 +138,8 @@ class GrowthApp:
         self.cb_parent_growth = ttk.Combobox(p_f, values=["（なし）"] + list(df_char.index), state="readonly");
         self.cb_parent_growth.pack(fill=tk.X);
         self.cb_parent_growth.current(0)
-        self.father_stat_entries = self._create_stat_inputs(p_f, "父：ステータス")
-        self.mother_stat_entries = self._create_stat_inputs(p_f, "母：ステータス")
+        self.father_stat_entries = self._create_stat_inputs(p_f, "父");
+        self.mother_stat_entries = self._create_stat_inputs(p_f, "母")
 
         # クラス選択
         cl_f = tk.LabelFrame(left_panel, text="クラス選択", padx=5, pady=2);
@@ -133,13 +149,13 @@ class GrowthApp:
         scr_cl = ttk.Scrollbar(cl_f, orient="vertical", command=can_cl.yview);
         scr_cl.pack(side=tk.RIGHT, fill=tk.Y);
         can_cl.configure(yscrollcommand=scr_cl.set)
-        inner_cl = tk.Frame(can_cl, bg="white")
+        inner_cl = tk.Frame(can_cl, bg="white");
         can_cl.create_window((0, 0), window=inner_cl, anchor="nw")
         for idx, name in enumerate(df_class.index):
             r, c = divmod(idx, 2)
             tk.Button(inner_cl, text=name, width=30, height=2, font=("", 10, "bold"),
                       command=lambda n=name: self.set_class(n), bg="#f8f9fa").grid(row=r, column=c, padx=5, pady=3)
-        inner_cl.bind("<Configure>", lambda e: can_cl.configure(scrollregion=can_cl.bbox("all")))
+        inner_cl.bind("<Configure>", lambda e: can_cl.configure(scrollregion=can_cl.bbox("all")));
         self._bind_mousewheel(can_cl)
 
         # ルート構築
@@ -166,8 +182,11 @@ class GrowthApp:
                   font=("", 14, "bold"), height=2).pack(fill=tk.X, pady=2)
         tk.Button(left_panel, text="履歴に保存", command=self.save_to_history, bg="#FF9800", fg="white").pack(fill=tk.X,
                                                                                                               pady=2)
-        tk.Button(left_panel, text="全リスト削除", command=self.clear_intervals).pack(fill=tk.X)
-        tk.Button(left_panel, text="🚪 終了", command=self.exit_app, bg="#f44336", fg="white").pack(fill=tk.X, pady=10)
+        tk.Button(left_panel, text="全リスト削除", command=self.clear_intervals).pack(fill=tk.X, pady=2)
+
+        # ★ 終了ボタン復旧 ★
+        tk.Button(left_panel, text="🚪 システム終了", command=self.exit_app, bg="#f44336", fg="white",
+                  font=("", 10, "bold")).pack(fill=tk.X, pady=10)
 
         # 3. 右パネル
         right_panel = tk.Frame(main_content);
@@ -175,26 +194,23 @@ class GrowthApp:
         self.fig, self.ax_rate = plt.subplots(figsize=(10, 3.5));
         self.canvas = FigureCanvasTkAgg(self.fig, master=right_panel);
         self.canvas.get_tk_widget().pack(fill=tk.X)
-
-        self.tree = ttk.Treeview(right_panel, columns=["区分"] + STATS_COLUMNS, show="headings", height=18)
+        self.tree = ttk.Treeview(right_panel, columns=["区分"] + STATS_COLUMNS, show="headings", height=15)
         for col in ["区分"] + STATS_COLUMNS: self.tree.heading(col, text=col); self.tree.column(col, width=85,
                                                                                                 anchor="center")
-        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.pack(fill=tk.BOTH, expand=True);
         self.tree.tag_configure('limit', foreground="red", font=("", 9, "bold"))
 
-        # 履歴エリア
-        hist_f = tk.LabelFrame(right_panel, text="保存済み履歴（上限値適用済み・比較用）", padx=10, pady=5);
+        hist_f = tk.LabelFrame(right_panel, text="保存済み履歴（自動保存）", padx=10, pady=5);
         hist_f.pack(fill=tk.X)
         self.history_tree = ttk.Treeview(hist_f, columns=["名前", "ルート情報"] + STATS_COLUMNS, show="headings",
                                          height=6)
         self.history_tree.heading("名前", text="名前");
         self.history_tree.column("名前", width=80, anchor="center")
         self.history_tree.heading("ルート情報", text="育成ルート");
-        self.history_tree.column("ルート情報", width=250, anchor="w")
+        self.history_tree.column("ルート情報", width=300, anchor="w")
         for col in STATS_COLUMNS: self.history_tree.heading(col, text=col); self.history_tree.column(col, width=65,
                                                                                                      anchor="center")
         self.history_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
         btn_f = tk.Frame(hist_f);
         btn_f.pack(side=tk.RIGHT, padx=5)
         tk.Button(btn_f, text="比較実行", command=self.compare_history, bg="#673AB7", fg="white", width=12).pack(pady=2)
@@ -245,18 +261,14 @@ class GrowthApp:
             pass
 
     def delete_selected_interval(self):
-        selected_idx = self.listbox.curselection()
-        if not selected_idx: return
-        idx = selected_idx[0]
-        self.listbox.delete(idx)
-        self.intervals.pop(idx)
+        sel = self.listbox.curselection()
+        if not sel: return
+        self.intervals.pop(sel[0]);
+        self.listbox.delete(sel[0])
         if self.intervals:
-            last_lv = self.intervals[-1]['end']
-            self.ent_start.delete(0, tk.END);
-            self.ent_start.insert(0, str(last_lv))
+            self.ent_start.delete(0, tk.END); self.ent_start.insert(0, str(self.intervals[-1]['end']))
         elif self.current_unit_data is not None:
-            self.ent_start.delete(0, tk.END);
-            self.ent_start.insert(0, str(int(self.current_unit_data["Lv"])))
+            self.ent_start.delete(0, tk.END); self.ent_start.insert(0, str(int(self.current_unit_data["Lv"])))
 
     def clear_intervals(self):
         self.intervals = []; self.listbox.delete(0, tk.END)
@@ -265,20 +277,17 @@ class GrowthApp:
         if not self.selected_char: return
         self.ax_rate.clear()
         pg = self._get_modified_personal_growth(self.selected_char)
-        p_name = self.cb_parent_growth.get()
+        p_name = self.cb_parent_growth.get();
         p_g = self._get_modified_personal_growth(p_name) // 2 if p_name != "（なし）" else 0
         cl_g = df_class.loc[self.selected_class.get(), STATS_COLUMNS].astype(
             float) if self.selected_class.get() in df_class.index else 0
-
         total_rates = pg + p_g + cl_g
         self.ax_rate.bar(STATS_COLUMNS, pg, label="個人", color="#90caf9")
         self.ax_rate.bar(STATS_COLUMNS, p_g, bottom=pg, label="親", color="#f48fb1")
         self.ax_rate.bar(STATS_COLUMNS, cl_g, bottom=pg + p_g, label="クラス", color="#a5d6a7")
-
-        for i, total in enumerate(total_rates):
-            self.ax_rate.text(i, total + 2, f"{int(total)}%", ha='center', fontsize=9, fontweight='bold')
-
-        self.ax_rate.set_ylabel("合計成長率 (%)")
+        for i, total in enumerate(total_rates): self.ax_rate.text(i, total + 2, f"{int(total)}%", ha='center',
+                                                                  fontweight='bold')
+        self.ax_rate.set_ylabel("合計成長率 (%)");
         self.ax_rate.set_ylim(0, 220);
         self.canvas.draw()
 
@@ -286,103 +295,72 @@ class GrowthApp:
         if self.current_unit_data is None or not self.intervals: return
         for itm in self.tree.get_children(): self.tree.delete(itm)
         curr = self.current_unit_data[STATS_COLUMNS].astype(float).copy()
-
         if any(k in self.selected_category_full for k in ["子", "外伝"]):
             fs = pd.Series({s: float(self.father_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
             ms = pd.Series({s: float(self.mother_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
-            if fs.sum() > 0 or ms.sum() > 0:
-                curr += ((fs + ms - curr * 2).clip(lower=0) / 4).clip(upper=(2 + curr / 10))
-
-        prev_cls = self.intervals[0]['class']
+            if fs.sum() > 0 or ms.sum() > 0: curr += ((fs + ms - curr * 2).clip(lower=0) / 4).clip(
+                upper=(2 + curr / 10))
+        prev_cls = self.intervals[0]['class'];
         self._insert_row(f"初期({prev_cls})", curr, prev_cls)
-
         for itm in self.intervals:
-            if itm['class'] != prev_cls:
-                curr = (curr + (df_class_base.loc[itm['class'], STATS_COLUMNS] - df_class_base.loc[
-                    prev_cls, STATS_COLUMNS]))
-                prev_cls = itm['class']
+            if itm['class'] != prev_cls: curr = (curr + (
+                        df_class_base.loc[itm['class'], STATS_COLUMNS] - df_class_base.loc[
+                    prev_cls, STATS_COLUMNS])); prev_cls = itm['class']
             diff = itm['end'] - itm['start']
             if diff > 0:
-                pg = self._get_modified_personal_growth(self.selected_char)
-                p_g = self._get_modified_personal_growth(
+                pg, p_g = self._get_modified_personal_growth(self.selected_char), self._get_modified_personal_growth(
                     self.cb_parent_growth.get()) // 2 if self.cb_parent_growth.get() != "（なし）" else 0
-                total_g = (pg + p_g + df_class.loc[itm['class'], STATS_COLUMNS]) / 100.0
-                curr = (curr + total_g * diff)
+                curr += (pg + p_g + df_class.loc[itm['class'], STATS_COLUMNS]) / 100.0 * diff
             self._insert_row(f"Lv.{itm['end']}({itm['class']})", curr, itm['class'])
         self.current_result = curr.copy()
 
     def _insert_row(self, label, stats, cls_name):
-        limit = df_class_limit.loc[cls_name, STATS_COLUMNS]
-        clamped_stats = stats.clip(upper=limit)
+        limit = df_class_limit.loc[cls_name, STATS_COLUMNS];
+        clamped = stats.clip(upper=limit)
         values = [label];
         is_capped = False
         for s in STATS_COLUMNS:
-            val = clamped_stats[s]
-            if val >= limit[s]: is_capped = True
+            val = clamped[s];
             values.append(f"{val:.2f}")
-        tag = ('limit',) if is_capped else ()
-        self.tree.insert("", tk.END, values=values, tags=tag)
+            if val >= limit[s]: is_capped = True
+        self.tree.insert("", tk.END, values=values, tags=('limit',) if is_capped else ())
 
-    # --- 履歴保存時、上限値を反映するように修正 ---
     def save_to_history(self):
         if self.current_result is None or not self.intervals: return
-
-        # 最終的なクラスの上限値を取得
-        last_cls = self.intervals[-1]['class']
-        limit = df_class_limit.loc[last_cls, STATS_COLUMNS]
-
-        # 上限を反映(クリップ)した値を保存用データとする
-        capped_result = self.current_result.clip(upper=limit)
-
-        route_str = f"[{self.selected_category_full}] " + " → ".join(
-            [f"{i['class']}{i['end']}" for i in self.intervals])
-        data = [self.selected_char, route_str] + [f"{v:.1f}" for v in capped_result]  # 上限反映済み
-
-        self.history_tree.insert("", tk.END, values=data)
-        messagebox.showinfo("保存", f"{self.selected_char} のルートと上限反映済み結果を保存しました。")
+        last_cls = self.intervals[-1]['class'];
+        capped = self.current_result.clip(upper=df_class_limit.loc[last_cls, STATS_COLUMNS])
+        route = f"[{self.selected_category_full}] " + "→".join([f"{i['class']}{i['end']}" for i in self.intervals])
+        data = [self.selected_char, route] + [f"{v:.1f}" for v in capped]
+        self.history_tree.insert("", tk.END, values=data);
+        self.save_history_to_file();
+        messagebox.showinfo("保存", "履歴を自動保存しました。")
 
     def compare_history(self):
-        selected = self.history_tree.selection()
-        if not selected or self.current_result is None: return
-        hist_values = self.history_tree.item(selected[0])['values']
-
-        # 履歴値（すでに保存時に上限適用済み）
-        h_stats = pd.Series([float(v) for v in hist_values[2:]], index=STATS_COLUMNS)
-
-        # 現在の計算値（表示中のルートの最終クラス上限を適用）
-        last_cls = self.intervals[-1]['class']
-        c_stats = self.current_result.clip(upper=df_class_limit.loc[last_cls, STATS_COLUMNS])
-
+        sel = self.history_tree.selection()
+        if not sel or self.current_result is None: return
+        h_vals = self.history_tree.item(sel[0])['values'];
+        h_stats = pd.Series([float(v) for v in h_vals[2:]], index=STATS_COLUMNS)
+        c_stats = self.current_result.clip(upper=df_class_limit.loc[self.intervals[-1]['class'], STATS_COLUMNS]);
         diff = c_stats - h_stats
-
-        comp_win = tk.Toplevel(self.root);
-        comp_win.title("期待値比較：上限反映済み")
-        comp_win.geometry("500x450")
-        tk.Label(comp_win,
-                 text=f"【比較】 現在 vs 履歴({hist_values[0]})\n※両方のデータに各最終クラスの上限を適用しています",
-                 font=("", 9, "bold")).pack(pady=5)
-
-        f = tk.Frame(comp_win, padx=20, pady=10);
+        win = tk.Toplevel(self.root);
+        win.title("比較：赤青表示");
+        win.geometry("500x450")
+        f = tk.Frame(win, padx=20, pady=10);
         f.pack(fill=tk.BOTH, expand=True)
-        tk.Label(f, text="項目", font=("", 9, "bold")).grid(row=0, column=0)
-        tk.Label(f, text="現在値", font=("", 9, "bold")).grid(row=0, column=1)
-        tk.Label(f, text="履歴値", font=("", 9, "bold")).grid(row=0, column=2)
-        tk.Label(f, text="差分", font=("", 9, "bold")).grid(row=0, column=3)
-
+        for i, h in enumerate(["項目", "現在値", "履歴値", "差分"]): tk.Label(f, text=h, font=("", 9, "bold")).grid(
+            row=0, column=i)
         for i, s in enumerate(STATS_COLUMNS):
-            tk.Label(f, text=s).grid(row=i + 1, column=0)
-            tk.Label(f, text=f"{c_stats[s]:.2f}").grid(row=i + 1, column=1)
+            tk.Label(f, text=s).grid(row=i + 1, column=0);
+            tk.Label(f, text=f"{c_stats[s]:.2f}").grid(row=i + 1, column=1);
             tk.Label(f, text=f"{h_stats[s]:.1f}").grid(row=i + 1, column=2)
-            d_val = diff[s]
-            color = "blue" if d_val > 0.01 else "red" if d_val < -0.01 else "black"
-            tk.Label(f, text=f"{d_val:+.2f}", fg=color, font=("", 10, "bold")).grid(row=i + 1, column=3)
+            color = "blue" if diff[s] > 0.01 else "red" if diff[s] < -0.01 else "black"
+            tk.Label(f, text=f"{diff[s]:+.2f}", fg=color, font=("", 10, "bold")).grid(row=i + 1, column=3)
 
     def delete_history(self):
-        selected_items = self.history_tree.selection()
-        if not selected_items: return
-        if messagebox.askyesno("削除確認", f"選択した {len(selected_items)} 件の履歴を削除しますか？"):
-            for item in selected_items:
-                self.history_tree.delete(item)
+        sel = self.history_tree.selection()
+        if sel and messagebox.askyesno("削除", "選択した履歴を削除しますか？"):
+            for i in sel: self.history_tree.delete(i)
+            self.save_history_to_file()
 
 
 if __name__ == "__main__":
