@@ -6,7 +6,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import platform
 import sys
 
-# --- 🛠 基本設定 & フォント対策 ---
+# --- 🛠 基本設定 ---
 plt.rcParams["axes.unicode_minus"] = False
 if platform.system() == "Darwin":
     plt.rcParams["font.family"] = "Hiragino Sans"
@@ -29,12 +29,10 @@ def load_and_clean_csv(filename, set_index=None):
         df.columns = df.columns.str.strip()
         if set_index: df = df.set_index(set_index)
         return df
-    except Exception as e:
-        print(f"Error loading {filename}: {e}")
+    except:
         return pd.DataFrame()
 
 
-# データの読み込み
 df_char = load_and_clean_csv("キャラ.csv", set_index="キャラ名")
 df_class = load_and_clean_csv("クラス.csv", set_index="クラス名")
 df_init = load_and_clean_csv("初期パラメーター.csv")
@@ -45,22 +43,22 @@ df_class_limit = load_and_clean_csv("クラス上限値.csv", set_index="クラ�
 class GrowthApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("FE if 期待値シミュレーター (ルート別初期値対応版)")
+        self.root.title("FE if 期待値シミュレーター (個別削除機能版)")
         self.root.geometry("1900x1050")
-
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
         self.intervals = []
+        self.current_result = None
         self.selected_char = ""
-        self.selected_category_full = ""  # 実際の「暗夜12章加入」などの文字列
-        self.current_unit_data = None  # 選択されたルートの初期値行
+        self.selected_category_full = ""
+        self.current_unit_data = None
         self.selected_class = tk.StringVar(value="（未選択）")
 
         self.create_widgets()
 
     def exit_app(self):
-        if messagebox.askokcancel("終了確認", "シミュレーターを終了しますか？"):
-            self.root.destroy()
+        if messagebox.askokcancel("終了", "シミュレーターを終了しますか？"):
+            self.root.destroy();
             sys.exit()
 
     def _get_modified_personal_growth(self, char_name):
@@ -73,118 +71,136 @@ class GrowthApp:
         return base
 
     def create_widgets(self):
-        # 1. 上部：キャラ選択 (ルート判別対応)
-        top_frame = tk.Frame(self.root, pady=10);
+        # 1. 上部：キャラ選択
+        top_frame = tk.Frame(self.root, pady=5);
         top_frame.pack(fill=tk.X)
-        configs = [("共通", "#9E9E9E", "共通"), ("白夜", "#2196F3", "白夜"),
-                   ("暗夜", "#F44336", "暗夜"), ("透魔", "#00BCD4", "透魔"),
-                   ("子世代", "#FF9800", "子|外伝")]
-
+        configs = [("共通", "#9E9E9E", "共通"), ("白夜", "#2196F3", "白夜"), ("暗夜", "#F44336", "暗夜"),
+                   ("透魔", "#00BCD4", "透魔"), ("子世代", "#FF9800", "子|外伝")]
         for i, (title, color, kw) in enumerate(configs):
             frame = tk.Frame(top_frame, bd=1, relief=tk.RIDGE);
-            frame.grid(row=0, column=i, sticky="nsew", padx=3)
-            tk.Label(frame, text=title, bg=color, fg="white", font=("", 10, "bold")).pack(fill=tk.X)
-            can = tk.Canvas(frame, width=220, height=140, bg="white", highlightthickness=0);
+            frame.grid(row=0, column=i, sticky="nsew", padx=2)
+            tk.Label(frame, text=title, bg=color, fg="white", font=("", 9, "bold")).pack(fill=tk.X)
+            can = tk.Canvas(frame, width=200, height=120, bg="white", highlightthickness=0);
             can.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             scr = ttk.Scrollbar(frame, orient="vertical", command=can.yview);
             scr.pack(side=tk.RIGHT, fill=tk.Y);
             can.configure(yscrollcommand=scr.set)
             content = tk.Frame(can, bg="white");
             can.create_window((0, 0), window=content, anchor="nw")
-
             mask = df_init["カテゴリ"].str.contains(kw, na=False)
             for _, row in df_init[mask].iterrows():
-                tk.Button(content, text=row["キャラ名"], width=20,
+                tk.Button(content, text=row["キャラ名"], width=18, font=("", 9),
                           command=lambda n=row["キャラ名"], k=kw: self.select_unit(n, k)).pack(pady=1)
-
             content.bind("<Configure>", lambda e, c=can: c.configure(scrollregion=c.bbox("all")))
             self._bind_mousewheel(can);
             top_frame.columnconfigure(i, weight=1)
 
-        content_frame = tk.Frame(self.root, padx=15);
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        main_content = tk.Frame(self.root);
+        main_content.pack(fill=tk.BOTH, expand=True)
 
-        # 2. 左パネル (操作エリア)
-        left_panel = tk.Frame(content_frame, width=650, padx=15);
+        # 2. 左パネル
+        left_panel = tk.Frame(main_content, width=650, padx=10);
         left_panel.pack(side=tk.LEFT, fill=tk.Y)
         left_panel.pack_propagate(False)
 
-        self.lbl_status = tk.Label(left_panel, text="キャラを選択してください", font=("", 16, "bold"), fg="#1a73e8")
+        self.lbl_status = tk.Label(left_panel, text="キャラを選択してください", font=("", 14, "bold"), fg="#1a73e8")
         self.lbl_status.pack(anchor="w", pady=5)
 
-        # 設定
-        settings_f = tk.Frame(left_panel);
-        settings_f.pack(fill=tk.X)
-        kamui_f = tk.LabelFrame(settings_f, text="カムイ得意・不得意", padx=10, pady=5);
-        kamui_f.pack(fill=tk.X, pady=5)
-        self.cb_good = ttk.Combobox(kamui_f, values=list(GROWTH_CORRECTIONS.keys()), state="readonly", width=12);
+        # 設定エリア
+        set_f = tk.Frame(left_panel);
+        set_f.pack(fill=tk.X)
+        k_f = tk.LabelFrame(set_f, text="カムイ得意/不得意", padx=5, pady=2);
+        k_f.pack(fill=tk.X, pady=2)
+        self.cb_good = ttk.Combobox(k_f, values=list(GROWTH_CORRECTIONS.keys()), state="readonly", width=12);
         self.cb_good.grid(row=0, column=1);
         self.cb_good.current(0)
-        self.cb_bad = ttk.Combobox(kamui_f, values=list(GROWTH_CORRECTIONS.keys()), state="readonly", width=12);
+        self.cb_bad = ttk.Combobox(k_f, values=list(GROWTH_CORRECTIONS.keys()), state="readonly", width=12);
         self.cb_bad.grid(row=0, column=3);
         self.cb_bad.current(0)
-        for cb in [self.cb_good, self.cb_bad]: cb.bind("<<ComboboxSelected>>", lambda e: self.update_graph())
-
-        parent_f = tk.LabelFrame(settings_f, text="子世代用：両親設定", padx=10, pady=5);
-        parent_f.pack(fill=tk.X, pady=5)
-        self.cb_parent_growth = ttk.Combobox(parent_f, values=["（なし）"] + list(df_char.index), state="readonly");
+        p_f = tk.LabelFrame(set_f, text="子世代用：両親設定", padx=5, pady=2);
+        p_f.pack(fill=tk.X, pady=2)
+        self.cb_parent_growth = ttk.Combobox(p_f, values=["（なし）"] + list(df_char.index), state="readonly");
         self.cb_parent_growth.pack(fill=tk.X);
         self.cb_parent_growth.current(0)
-        self.cb_parent_growth.bind("<<ComboboxSelected>>", lambda e: self.update_graph())
-        self.father_stat_entries = self._create_stat_inputs(parent_f, "父：ステータス")
-        self.mother_stat_entries = self._create_stat_inputs(parent_f, "母：ステータス")
+        self.father_stat_entries = self._create_stat_inputs(p_f, "父：ステータス")
+        self.mother_stat_entries = self._create_stat_inputs(p_f, "母：ステータス")
 
         # クラス選択
-        class_sel_f = tk.LabelFrame(left_panel, text="クラス一括選択", padx=10, pady=5);
-        class_sel_f.pack(fill=tk.BOTH, expand=True, pady=5)
-        can_cl = tk.Canvas(class_sel_f, bg="white", highlightthickness=0);
+        cl_f = tk.LabelFrame(left_panel, text="クラス選択", padx=5, pady=2);
+        cl_f.pack(fill=tk.BOTH, expand=True, pady=2)
+        can_cl = tk.Canvas(cl_f, bg="white", highlightthickness=0);
         can_cl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scr_cl = ttk.Scrollbar(class_sel_f, orient="vertical", command=can_cl.yview);
+        scr_cl = ttk.Scrollbar(cl_f, orient="vertical", command=can_cl.yview);
         scr_cl.pack(side=tk.RIGHT, fill=tk.Y);
         can_cl.configure(yscrollcommand=scr_cl.set)
         inner_cl = tk.Frame(can_cl, bg="white")
         can_cl.create_window((0, 0), window=inner_cl, anchor="nw")
         for idx, name in enumerate(df_class.index):
-            r, c = divmod(idx, 3)
-            tk.Button(inner_cl, text=name, width=20, font=("", 9), command=lambda n=name: self.set_class(n),
-                      bg="#f8f9fa").grid(row=r, column=c, padx=3, pady=2)
+            r, c = divmod(idx, 2)
+            tk.Button(inner_cl, text=name, width=30, height=2, font=("", 10, "bold"),
+                      command=lambda n=name: self.set_class(n), bg="#f8f9fa").grid(row=r, column=c, padx=5, pady=3)
         inner_cl.bind("<Configure>", lambda e: can_cl.configure(scrollregion=can_cl.bbox("all")))
         self._bind_mousewheel(can_cl)
 
-        # ルート確定
-        route_f = tk.LabelFrame(left_panel, text="ルート確定", padx=10, pady=10);
-        route_f.pack(fill=tk.X, pady=5)
-        tk.Label(route_f, text="選択中:").pack(side=tk.LEFT)
-        tk.Label(route_f, textvariable=self.selected_class, fg="#d32f2f", font=("", 10, "bold")).pack(side=tk.LEFT,
-                                                                                                      padx=10)
-        tk.Label(route_f, text="Lv:").pack(side=tk.LEFT);
-        self.ent_start = tk.Entry(route_f, width=4);
+        # ルート構築
+        rt_f = tk.LabelFrame(left_panel, text="ルート構築", padx=5, pady=5);
+        rt_f.pack(fill=tk.X, pady=2)
+        tk.Label(rt_f, textvariable=self.selected_class, fg="red", font=("", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Label(rt_f, text="Lv:").pack(side=tk.LEFT);
+        self.ent_start = tk.Entry(rt_f, width=4);
         self.ent_start.pack(side=tk.LEFT)
-        tk.Label(route_f, text="→").pack(side=tk.LEFT);
-        self.ent_end = tk.Entry(route_f, width=4);
+        tk.Label(rt_f, text="→").pack(side=tk.LEFT);
+        self.ent_end = tk.Entry(rt_f, width=4);
         self.ent_end.insert(0, "20");
         self.ent_end.pack(side=tk.LEFT)
-        tk.Button(route_f, text="追加", command=self.add_interval, bg="#4CAF50", fg="white", width=8).pack(
-            side=tk.RIGHT)
+        tk.Button(rt_f, text="追加", command=self.add_interval, bg="#4CAF50", fg="white", width=8).pack(side=tk.RIGHT)
 
-        self.listbox = tk.Listbox(left_panel, height=4, font=("", 10));
-        self.listbox.pack(fill=tk.X, pady=5)
+        # --- ルートリストと個別削除ボタン ---
+        list_btn_f = tk.Frame(left_panel);
+        list_btn_f.pack(fill=tk.X)
+        self.listbox = tk.Listbox(list_btn_f, height=4, font=("", 9));
+        self.listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2)
+        tk.Button(list_btn_f, text="選択ルート削除", command=self.delete_selected_interval, bg="#ffc107",
+                  width=12).pack(side=tk.RIGHT, padx=2)
+
         tk.Button(left_panel, text="📊 期待値計算実行", command=self.calculate_expectations, bg="#2196F3", fg="white",
-                  font=("", 14, "bold"), height=2).pack(fill=tk.X, pady=5)
-        tk.Button(left_panel, text="リスト全削除", command=self.clear_intervals).pack(fill=tk.X, pady=2)
-        tk.Button(left_panel, text="🚪 アプリを終了", command=self.exit_app, bg="#f44336", fg="white",
-                  font=("", 10, "bold")).pack(fill=tk.X, pady=10)
+                  font=("", 14, "bold"), height=2).pack(fill=tk.X, pady=2)
+        tk.Button(left_panel, text="履歴に保存", command=self.save_to_history, bg="#FF9800", fg="white").pack(fill=tk.X,
+                                                                                                              pady=2)
+        tk.Button(left_panel, text="全リスト削除", command=self.clear_intervals).pack(fill=tk.X)
+        tk.Button(left_panel, text="🚪 終了", command=self.exit_app, bg="#f44336", fg="white").pack(fill=tk.X, pady=10)
 
         # 3. 右パネル
-        right_panel = tk.Frame(content_frame);
+        right_panel = tk.Frame(main_content);
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         self.fig, self.ax_rate = plt.subplots(figsize=(10, 3.5));
         self.canvas = FigureCanvasTkAgg(self.fig, master=right_panel);
         self.canvas.get_tk_widget().pack(fill=tk.X)
-        self.tree = ttk.Treeview(right_panel, columns=["区分"] + STATS_COLUMNS, show="headings", height=22)
+
+        self.tree = ttk.Treeview(right_panel, columns=["区分"] + STATS_COLUMNS, show="headings", height=18)
         for col in ["区分"] + STATS_COLUMNS: self.tree.heading(col, text=col); self.tree.column(col, width=85,
                                                                                                 anchor="center")
         self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.tag_configure('limit', foreground="red", font=("", 9, "bold"))
+
+        # 履歴エリア
+        hist_f = tk.LabelFrame(right_panel, text="保存済み履歴（選択して比較・削除）", padx=10, pady=5);
+        hist_f.pack(fill=tk.X)
+        self.history_tree = ttk.Treeview(hist_f, columns=["名前", "ルート情報"] + STATS_COLUMNS, show="headings",
+                                         height=6)
+        self.history_tree.heading("名前", text="名前");
+        self.history_tree.column("名前", width=80, anchor="center")
+        self.history_tree.heading("ルート情報", text="育成ルート");
+        self.history_tree.column("ルート情報", width=250, anchor="w")
+        for col in STATS_COLUMNS: self.history_tree.heading(col, text=col); self.history_tree.column(col, width=65,
+                                                                                                     anchor="center")
+        self.history_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        btn_f = tk.Frame(hist_f);
+        btn_f.pack(side=tk.RIGHT, padx=5)
+        tk.Button(btn_f, text="比較実行", command=self.compare_history, bg="#673AB7", fg="white", width=12).pack(pady=2)
+        tk.Button(btn_f, text="選択履歴削除", command=self.delete_history, bg="#f44336", fg="white", width=12).pack(
+            pady=2)
 
     def _bind_mousewheel(self, canvas):
         def _on_mw(e):
@@ -196,29 +212,24 @@ class GrowthApp:
         canvas.bind_all("<MouseWheel>", _on_mw)
 
     def _create_stat_inputs(self, parent, label):
-        tk.Label(parent, text=label, font=("", 8)).pack(anchor="w");
         f = tk.Frame(parent);
-        f.pack()
+        f.pack();
         entries = {}
         for i, s in enumerate(STATS_COLUMNS):
-            r, c = divmod(i, 4);
-            tk.Label(f, text=s, width=3).grid(row=r, column=c * 2)
-            e = tk.Entry(f, width=6);
-            e.grid(row=r, column=c * 2 + 1);
+            tk.Label(f, text=s, font=("", 8), width=3).grid(row=0, column=i * 2)
+            e = tk.Entry(f, width=5);
+            e.grid(row=0, column=i * 2 + 1);
             entries[s] = e
         return entries
 
     def select_unit(self, name, kw):
-        # 名前とキーワードの両方でフィルタリング
         mask = (df_init["キャラ名"] == name) & (df_init["カテゴリ"].str.contains(kw, na=False))
         if not df_init[mask].empty:
-            match = df_init[mask].iloc[0]
-            self.current_unit_data = match
-            self.selected_char = name
-            self.selected_category_full = match["カテゴリ"]
-            self.lbl_status.config(text=f"選択中: {name} ({self.selected_category_full})")
+            self.current_unit_data = df_init[mask].iloc[0]
+            self.selected_char, self.selected_category_full = name, self.current_unit_data["カテゴリ"]
+            self.lbl_status.config(text=f"選択: {name} ({self.selected_category_full})")
             self.ent_start.delete(0, tk.END);
-            self.ent_start.insert(0, str(int(match["Lv"])))
+            self.ent_start.insert(0, str(int(self.current_unit_data["Lv"])))
             self.update_graph()
 
     def set_class(self, name):
@@ -227,13 +238,28 @@ class GrowthApp:
     def add_interval(self):
         try:
             s, e, cls = int(self.ent_start.get()), int(self.ent_end.get()), self.selected_class.get()
-            if cls == "（未選択）" or s > e: raise ValueError
             self.intervals.append({"start": s, "end": e, "class": cls})
-            self.listbox.insert(tk.END, f"Lv.{s}→{e} ({cls})");
+            self.listbox.insert(tk.END, f"Lv.{s}→{e} ({cls})")
             self.ent_start.delete(0, tk.END);
             self.ent_start.insert(0, str(e))
         except:
-            messagebox.showwarning("エラー", "クラスとレベルを正しく設定してください。")
+            pass
+
+    # --- 個別削除ロジック (ルート) ---
+    def delete_selected_interval(self):
+        selected_idx = self.listbox.curselection()
+        if not selected_idx: return
+        idx = selected_idx[0]
+        self.listbox.delete(idx)  # UIから削除
+        self.intervals.pop(idx)  # データから削除
+        # 次の開始レベルを自動調整
+        if self.intervals:
+            last_lv = self.intervals[-1]['end']
+            self.ent_start.delete(0, tk.END);
+            self.ent_start.insert(0, str(last_lv))
+        elif self.current_unit_data is not None:
+            self.ent_start.delete(0, tk.END);
+            self.ent_start.insert(0, str(int(self.current_unit_data["Lv"])))
 
     def clear_intervals(self):
         self.intervals = []; self.listbox.delete(0, tk.END)
@@ -241,64 +267,103 @@ class GrowthApp:
     def update_graph(self):
         if not self.selected_char: return
         self.ax_rate.clear()
-        pg = self._get_modified_personal_growth(self.selected_char);
+        pg = self._get_modified_personal_growth(self.selected_char)
         p_name = self.cb_parent_growth.get()
         p_g = self._get_modified_personal_growth(p_name) // 2 if p_name != "（なし）" else 0
-        cl_name = self.selected_class.get()
-        cl_g = df_class.loc[cl_name, STATS_COLUMNS].astype(float) if cl_name in df_class.index else 0
-        total = pg + p_g + cl_g;
-        x = range(len(STATS_COLUMNS))
-        self.ax_rate.bar(x, pg, label="個人", color="#90caf9");
-        self.ax_rate.bar(x, p_g, bottom=pg, label="親", color="#f48fb1");
-        self.ax_rate.bar(x, cl_g, bottom=pg + p_g, label="クラス", color="#a5d6a7")
-        for i, v in enumerate(total): self.ax_rate.text(i, v + 2, f"{int(v)}%", ha='center', fontweight='bold')
-        self.ax_rate.set_xticks(x);
-        self.ax_rate.set_xticklabels(STATS_COLUMNS);
+        cl_g = df_class.loc[self.selected_class.get(), STATS_COLUMNS].astype(
+            float) if self.selected_class.get() in df_class.index else 0
+        total = pg + p_g + cl_g
+        self.ax_rate.bar(STATS_COLUMNS, pg, label="個人", color="#90caf9")
+        self.ax_rate.bar(STATS_COLUMNS, p_g, bottom=pg, label="親", color="#f48fb1")
+        self.ax_rate.bar(STATS_COLUMNS, cl_g, bottom=pg + p_g, label="クラス", color="#a5d6a7")
         self.ax_rate.set_ylim(0, 200);
         self.canvas.draw()
 
     def calculate_expectations(self):
         if self.current_unit_data is None or not self.intervals: return
         for itm in self.tree.get_children(): self.tree.delete(itm)
-        try:
-            # 正しいルートの初期値を参照
-            curr = self.current_unit_data[STATS_COLUMNS].astype(float).copy()
+        curr = self.current_unit_data[STATS_COLUMNS].astype(float).copy()
 
-            # 子世代遺伝
-            if any(k in self.selected_category_full for k in ["子", "外伝"]):
-                fs = pd.Series({s: float(self.father_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
-                ms = pd.Series({s: float(self.mother_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
-                if fs.sum() > 0 or ms.sum() > 0:
-                    gen_sum = (fs + ms - curr * 2).clip(lower=0)
-                    bonus = (gen_sum / 4).clip(upper=(2 + curr / 10))
-                    curr += bonus
+        if any(k in self.selected_category_full for k in ["子", "外伝"]):
+            fs = pd.Series({s: float(self.father_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
+            ms = pd.Series({s: float(self.mother_stat_entries[s].get() or 0) for s in STATS_COLUMNS})
+            if fs.sum() > 0 or ms.sum() > 0:
+                curr += ((fs + ms - curr * 2).clip(lower=0) / 4).clip(upper=(2 + curr / 10))
 
-            prev_cls = self.intervals[0]['class']
-            curr = curr.clip(upper=df_class_limit.loc[prev_cls, STATS_COLUMNS])
-            self.tree.insert("", tk.END,
-                             values=[f"加入(Lv.{self.intervals[0]['start']}: {prev_cls})"] + [f"{v:.2f}" for v in curr],
-                             tags=('bold',))
+        prev_cls = self.intervals[0]['class']
+        self._insert_row(f"初期({prev_cls})", curr, prev_cls)
 
-            for itm in self.intervals:
-                if itm['class'] != prev_cls:
-                    curr = (curr + (df_class_base.loc[itm['class'], STATS_COLUMNS] - df_class_base.loc[
-                        prev_cls, STATS_COLUMNS])).clip(upper=df_class_limit.loc[itm['class'], STATS_COLUMNS])
-                    self.tree.insert("", tk.END, values=[f"→ {itm['class']} 変更"] + [f"{v:.2f}" for v in curr],
-                                     tags=('cc',))
-                diff = itm['end'] - itm['start']
-                if diff > 0:
-                    pg = self._get_modified_personal_growth(self.selected_char)
-                    p_g = self._get_modified_personal_growth(
-                        self.cb_parent_growth.get()) // 2 if self.cb_parent_growth.get() != "（なし）" else 0
-                    total_g = (pg + p_g + df_class.loc[itm['class'], STATS_COLUMNS]) / 100.0
-                    curr = (curr + total_g * diff).clip(upper=df_class_limit.loc[itm['class'], STATS_COLUMNS])
-                    self.tree.insert("", tk.END,
-                                     values=[f"Lv.{itm['end']} ({itm['class']})"] + [f"{v:.2f}" for v in curr])
+        for itm in self.intervals:
+            if itm['class'] != prev_cls:
+                curr = (curr + (df_class_base.loc[itm['class'], STATS_COLUMNS] - df_class_base.loc[
+                    prev_cls, STATS_COLUMNS]))
                 prev_cls = itm['class']
-            self.tree.tag_configure('bold', background="#e3f2fd");
-            self.tree.tag_configure('cc', background="#fff9c4")
-        except Exception as e:
-            messagebox.showerror("計算失敗", str(e))
+            diff = itm['end'] - itm['start']
+            if diff > 0:
+                pg = self._get_modified_personal_growth(self.selected_char)
+                p_g = self._get_modified_personal_growth(
+                    self.cb_parent_growth.get()) // 2 if self.cb_parent_growth.get() != "（なし）" else 0
+                total_g = (pg + p_g + df_class.loc[itm['class'], STATS_COLUMNS]) / 100.0
+                curr = (curr + total_g * diff)
+            self._insert_row(f"Lv.{itm['end']}({itm['class']})", curr, itm['class'])
+        self.current_result = curr.copy()
+
+    def _insert_row(self, label, stats, cls_name):
+        limit = df_class_limit.loc[cls_name, STATS_COLUMNS]
+        clamped_stats = stats.clip(upper=limit)
+        values = [label];
+        is_capped = False
+        for s in STATS_COLUMNS:
+            val = clamped_stats[s]
+            if val >= limit[s]: is_capped = True
+            values.append(f"{val:.2f}")
+        tag = ('limit',) if is_capped else ()
+        self.tree.insert("", tk.END, values=values, tags=tag)
+
+    def save_to_history(self):
+        if self.current_result is None or not self.intervals: return
+        route_str = f"[{self.selected_category_full}] " + " → ".join(
+            [f"{i['class']}{i['end']}" for i in self.intervals])
+        data = [self.selected_char, route_str] + [f"{v:.1f}" for v in self.current_result]
+        self.history_tree.insert("", tk.END, values=data)
+        messagebox.showinfo("保存", f"{self.selected_char} のルートと結果を保存しました。")
+
+    def compare_history(self):
+        selected = self.history_tree.selection()
+        if not selected or self.current_result is None: return
+        hist_values = self.history_tree.item(selected[0])['values']
+        h_stats = pd.Series([float(v) for v in hist_values[2:]], index=STATS_COLUMNS)
+        last_cls = self.intervals[-1]['class']
+        c_stats = self.current_result.clip(upper=df_class_limit.loc[last_cls, STATS_COLUMNS])
+        diff = c_stats - h_stats
+
+        comp_win = tk.Toplevel(self.root);
+        comp_win.title("期待値比較：赤青表示")
+        comp_win.geometry("500x450")
+        tk.Label(comp_win, text=f"【比較】 現在 vs 履歴({hist_values[0]})\n(ルート: {hist_values[1][:30]}...)",
+                 font=("", 9, "bold")).pack()
+        f = tk.Frame(comp_win, padx=20, pady=10);
+        f.pack(fill=tk.BOTH, expand=True)
+        tk.Label(f, text="項目", font=("", 9, "bold")).grid(row=0, column=0)
+        tk.Label(f, text="現在値", font=("", 9, "bold")).grid(row=0, column=1)
+        tk.Label(f, text="履歴値", font=("", 9, "bold")).grid(row=0, column=2)
+        tk.Label(f, text="差分", font=("", 9, "bold")).grid(row=0, column=3)
+
+        for i, s in enumerate(STATS_COLUMNS):
+            tk.Label(f, text=s).grid(row=i + 1, column=0)
+            tk.Label(f, text=f"{c_stats[s]:.2f}").grid(row=i + 1, column=1)
+            tk.Label(f, text=f"{h_stats[s]:.1f}").grid(row=i + 1, column=2)
+            d_val = diff[s]
+            color = "blue" if d_val > 0.01 else "red" if d_val < -0.01 else "black"
+            tk.Label(f, text=f"{d_val:+.2f}", fg=color, font=("", 10, "bold")).grid(row=i + 1, column=3)
+
+    # --- 履歴個別削除 ---
+    def delete_history(self):
+        selected_items = self.history_tree.selection()
+        if not selected_items: return
+        if messagebox.askyesno("削除確認", f"選択した {len(selected_items)} 件の履歴を削除しますか？"):
+            for item in selected_items:
+                self.history_tree.delete(item)
 
 
 if __name__ == "__main__":
