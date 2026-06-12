@@ -2,15 +2,42 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import matplotlib.font_manager as fm
+import urllib.request
 
-# --- 🛠 基本設定 ---
-st.set_page_config(page_title="FE if 期待値シミュレーター", layout="wide")
-
-# グラフの日本語化設定
+# --- 🛠 基本設定（Linux環境対応の日本語フォント自動ダウンロード） ---
 plt.rcParams["axes.unicode_minus"] = False
-# Streamlit（Linux環境等）でも比較的安全なフォント設定
-plt.rcParams["font.family"] = ["sans-serif", "Hiragino Sans", "Yu Gothic", "TakaoPGothic"]
 
+
+@st.cache_resource
+def load_japanese_font():
+    """Linux環境（Streamlit Cloud）でも確実に日本語を表示するためのフォント設定"""
+    # 信頼性の高いパブリックなNoto SansフォントのURL
+    font_url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTC/NotoSansCJKjp-Regular.ttc"
+    font_path = "NotoSansCJKjp-Regular.ttc"
+
+    # ローカルにフォントがなければダウンロード
+    if not os.path.exists(font_path):
+        try:
+            urllib.request.urlretrieve(font_url, font_path)
+        except Exception as e:
+            # ダウンロード失敗時はOSの標準フォントをフォールバックに指定
+            return ["sans-serif", "Hiragino Sans", "Yu Gothic", "TakaoPGothic"]
+
+    # フォントをMatplotlibに登録
+    fm.fontManager.addfont(font_path)
+    prop = fm.FontProperties(fname=font_path)
+    return prop.get_name()
+
+
+# 決定した日本語フォント名を適用
+try:
+    font_name = load_japanese_font()
+    plt.rcParams["font.family"] = font_name
+except:
+    plt.rcParams["font.family"] = ["sans-serif", "Hiragino Sans", "Yu Gothic", "TakaoPGothic"]
+
+# （これ以降の GROWTH_CORRECTIONS などのコードはそのまま）
 GROWTH_CORRECTIONS = {
     "（なし）": [0, 0, 0, 0, 0, 0, 0, 0],
     "HP": [15, 0, 0, 0, 0, 0, 0, 0], "力": [0, 15, 0, 5, 0, 0, 5, 0], "魔力": [0, 0, 15, 0, 5, 0, 0, 5],
